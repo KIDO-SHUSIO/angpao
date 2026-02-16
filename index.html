@@ -168,9 +168,27 @@
     }
   </style>
   <style>body { box-sizing: border-box; }</style>
-  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
-  <script src="/_sdk/element_sdk.js" type="text/javascript"></script>
- </head>
+  <!-- Firebase scripts -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+  <script>
+    // Firebase configuration for tester-a903d
+    const firebaseConfig = {
+      apiKey: "AIzaSyDPYgwPG7sM6N_fPXQxvbXskIHdJepD9WM",
+      authDomain: "tester-a903d.firebaseapp.com",
+      databaseURL: "https://tester-a903d-default-rtdb.firebaseio.com/",
+      projectId: "tester-a903d",
+      storageBucket: "tester-a903d.firebasestorage.app",
+      messagingSenderId: "939339329194",
+      appId: "1:939339329194:web:154a87fcf564c665d2aad3",
+      measurementId: "G-WY59XWJ280"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+  </script>
+
+</head>
  <body class="h-full bg-gradient-to-br from-red-900 via-red-800 to-red-900 overflow-auto">
   <div id="app" class="min-h-full w-full flex items-center justify-center p-4"><!-- หน้าผู้ส่ง (สร้างซอง + รายการซอง) -->
    <div id="sender-page" class="w-full max-w-2xl"><!-- Tab Navigation -->
@@ -214,7 +232,7 @@
      <h2 class="text-2xl font-bold text-yellow-300 chinese-text mb-2">恭喜發財</h2>
      <p class="text-red-200 text-sm">แตะซองเพื่อเปิดรับโชค</p>
     </div>
-    <div class="envelope float-animation" id="envelope" onclick="openEnvelope()">
+    <div class="envelope float-animation" id="envelope" onclick="openEnvelope()" role="button" tabindex="0" aria-label="เปิดซองอั่งเปา">
      <div class="envelope-flap"></div>
      <div class="envelope-front">
       <div class="gold-circle"><span class="chinese-text text-red-800">福</span>
@@ -244,21 +262,28 @@
     let envelopes = [];
     let currentEnvelopeId = null;
 
-    const dataHandler = {
-      onDataChanged(data) {
-        envelopes = data;
+    // initialize Firebase listener
+    function initFirebase() {
+      const ref = db.ref('envelopes');
+      ref.orderByChild('created_at').on('value', snapshot => {
+        envelopes = [];
+        snapshot.forEach(child => {
+          envelopes.push(child.val());
+        });
+        // sort descending in case orderByChild doesn't behave as expected
+        envelopes.sort((a, b) => b.created_at.localeCompare(a.created_at));
         renderEnvelopesList();
-      }
-    };
-
-    async function initDataSDK() {
-      const result = await window.dataSdk.init(dataHandler);
-      if (!result.isOk) {
-        console.error('Failed to initialize data SDK');
-      }
+      }, err => {
+        console.error('Realtime listener error', err);
+        const linkSection = document.getElementById('link-section');
+        if (linkSection) {
+          linkSection.classList.remove('hidden');
+          linkSection.innerHTML = '<div class="bg-red-50 border-2 border-red-300 rounded-xl p-4"><p class="text-red-700 font-medium">⚠️ ไม่สามารถโหลดข้อมูลได้ กรุณารีเฟรชหน้า</p></div>';
+        }
+      });
     }
 
-    initDataSDK();
+    initFirebase();
 
     function setAmount(amount) {
       document.getElementById('amount-input').value = amount;
@@ -292,9 +317,13 @@
     }
 
     async function createEnvelope() {
-      const amount = parseFloat(document.getElementById('amount-input').value);
+      let rawAmount = document.getElementById('amount-input').value;
+      // remove commas or other non‑numeric characters except dot
+      rawAmount = rawAmount.replace(/[^0-9.]/g, '');
+      const amount = parseFloat(rawAmount);
       const message = document.getElementById('message-input').value.trim();
-      
+
+      // client-side validation
       if (!amount || amount <= 0) {
         const linkSection = document.getElementById('link-section');
         linkSection.classList.remove('hidden');
@@ -302,49 +331,65 @@
         setTimeout(() => linkSection.classList.add('hidden'), 2000);
         return;
       }
-      
-      const envelopeId = 'env_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-      
-      const result = await window.dataSdk.create({
-        envelope_id: envelopeId,
-        amount: amount,
-        message: message || 'สุขสันต์วันตรุษจีน',
-        created_at: new Date().toISOString(),
-        opened_at: '',
-        is_opened: false
-      });
 
-      if (!result.isOk) {
-        alert('เกิดข้อผิดพลาดในการสร้างซอง');
+
+      const envelopeId = 'env_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+      try {
+        await db.ref('envelopes/' + envelopeId).set({
+          envelope_id: envelopeId,
+          amount: amount,
+          message: message || 'สุขสันต์วันตรุษจีน',
+          created_at: new Date().toISOString(),
+          opened_at: '',
+          is_opened: false
+        });
+      } catch (err) {
+        console.error('Realtime create failed', err);
+        const linkSection = document.getElementById('link-section');
+        linkSection.classList.remove('hidden');
+        linkSection.innerHTML = '<div class="bg-red-50 border-2 border-red-300 rounded-xl p-4"><p class="text-red-700 font-medium">⚠️ เกิดข้อผิดพลาดภายใน กรุณาลองอีกครั้ง</p></div>';
+        setTimeout(() => linkSection.classList.add('hidden'), 4000);
         return;
       }
-      
+
       const baseUrl = window.location.origin + window.location.pathname;
-      const params = new URLSearchParams({
-        open: 'yes',
-        id: envelopeId,
-        amount: amount,
-        message: message || 'สุขสันต์วันตรุษจีน'
-      });
+      const params = new URLSearchParams();
+      params.set('open', 'yes');
+      params.set('id', envelopeId);
+      params.set('amount', amount.toString());
+      params.set('message', message || 'สุขสันต์วันตรุษจีน');
       const shareLink = `${baseUrl}?${params.toString()}`;
-      
+
       document.getElementById('share-link').value = shareLink;
       document.getElementById('link-section').classList.remove('hidden');
       document.getElementById('copy-success').classList.add('hidden');
-      
+
       // Clear inputs
       document.getElementById('amount-input').value = '';
       document.getElementById('message-input').value = '';
-      
+
       // Switch to history tab
       setTimeout(() => switchTab('history'), 1000);
     }
 
     function copyLink() {
       const linkInput = document.getElementById('share-link');
-      linkInput.select();
-      document.execCommand('copy');
-      document.getElementById('copy-success').classList.remove('hidden');
+      const text = linkInput.value;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          document.getElementById('copy-success').classList.remove('hidden');
+        }).catch(err => {
+          console.error('Clipboard API failed, falling back', err);
+          linkInput.select();
+          document.execCommand('copy');
+          document.getElementById('copy-success').classList.remove('hidden');
+        });
+      } else {
+        linkInput.select();
+        document.execCommand('copy');
+        document.getElementById('copy-success').classList.remove('hidden');
+      }
     }
 
     function renderEnvelopesList() {
@@ -383,14 +428,13 @@
       
       // Mark envelope as opened
       if (currentEnvelopeId) {
-        const envelope = envelopes.find(e => e.envelope_id === currentEnvelopeId);
-        if (envelope && !envelope.is_opened) {
-          const updatedEnvelope = {
-            ...envelope,
+        try {
+          await db.ref('envelopes/' + currentEnvelopeId).update({
             is_opened: true,
             opened_at: new Date().toISOString()
-          };
-          await window.dataSdk.update(updatedEnvelope);
+          });
+        } catch (err) {
+          console.error('Failed to mark envelope opened', err);
         }
       }
     }
@@ -400,7 +444,13 @@
       const isOpen = urlParams.get('open');
       const id = urlParams.get('id');
       const amount = urlParams.get('amount');
-      const message = urlParams.get('message');
+      // decode message explicitly since we encoded earlier
+      let message = urlParams.get('message');
+      if (message) {
+        try {
+          message = decodeURIComponent(message);
+        } catch (_) { /* ignore invalid */ }
+      }
       
       if (isOpen === 'yes' && id) {
         currentEnvelopeId = id;
@@ -409,6 +459,17 @@
         
         document.getElementById('reveal-amount').textContent = `฿${parseFloat(amount).toLocaleString()}`;
         document.getElementById('reveal-message').textContent = message || 'สุขสันต์วันตรุษจีน!';
+      }
+
+      // accessibility: allow keyboard users to open
+      const envelopeEl = document.getElementById('envelope');
+      if (envelopeEl) {
+        envelopeEl.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openEnvelope();
+          }
+        });
       }
     }
 
